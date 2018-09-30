@@ -1,5 +1,5 @@
 var tap = require('tap');
-var test = require('tap-only');
+var test = require('tap').test;
 var path = require('path');
 var sinon = require('sinon');
 var proxyquire = require('proxyquire');
@@ -8,7 +8,7 @@ var writeSpy = sinon.spy();
 
 var mockPackage;
 
-var wizard = proxyquire('../cli/commands/protect/wizard', {
+var wizard = proxyquire('../src/cli/commands/protect/wizard', {
   'then-fs': {
     writeFile: function (filename, content) {
       if (filename.includes('package.json')) {

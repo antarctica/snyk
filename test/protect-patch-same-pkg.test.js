@@ -1,5 +1,5 @@
-var toTasks = require('../cli/commands/protect/tasks');
-var test = require('tap-only');
+var toTasks = require('../src/cli/commands/protect/tasks');
+var test = require('tap').test;
 var answers = require(__dirname + '/fixtures/patch-same-package-answers.json');
 var proxyquire = require('proxyquire');
 var sinon = require('sinon');
@@ -11,7 +11,7 @@ var renameSpy = sinon.spy();
 var writeSpy = sinon.spy();
 
 // main proxy
-var patch = proxyquire('../lib/protect/patch', {
+var patch = proxyquire('../src/lib/protect/patch', {
   'recursive-readdir': function (source, cb) {
     cb(null, ['uglify.js.orig']);
   },
@@ -40,7 +40,7 @@ var patch = proxyquire('../lib/protect/patch', {
       };
     },
   },
-  './apply-patch': proxyquire('../lib/protect/apply-patch', {
+  './apply-patch': proxyquire('../src/lib/protect/apply-patch', {
     'child_process': {
       exec: function (a, b, callback) {
         // ignore dry run

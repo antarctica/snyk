@@ -1,4 +1,4 @@
-var test = require('tap-only');
+var test = require('tap').test;
 var path = require('path');
 var fs = require('fs');
 var sinon = require('sinon');
@@ -10,20 +10,20 @@ process.env.SNYK_API = 'http://localhost:' + port + '/api/v1';
 process.env.SNYK_HOST = 'http://localhost:' + port;
 process.env.LOG_LEVEL = 0;
 var server = require('./fake-server')(process.env.SNYK_API, apiKey);
-var subProcess = require('../../lib/sub-process');
-var plugins = require('../../lib/plugins');
+var subProcess = require('../../src/lib/sub-process');
+var plugins = require('../../src/lib/plugins');
 var needle = require('needle');
 
 // ensure this is required *after* the demo server, since this will
 // configure our fake configuration too
-var cli = require('../../cli/commands');
+var cli = require('../../src/cli/commands');
 var snykPolicy = require('snyk-policy');
 
 var before = test;
 var after = test;
 
 // @later: remove this config stuff.
-// Was copied straight from ../cli-server.js
+// Was copied straight from ../src/cli-server.js
 before('setup', function (t) {
   t.plan(3);
   cli.config('get', 'api').then(function (key) {
@@ -42,7 +42,7 @@ before('setup', function (t) {
 });
 
 // @later: remove this config stuff.
-// Was copied straight from ../cli-server.js
+// Was copied straight from ../src/cli-server.js
 before('prime config', function (t) {
   cli.config('set', 'api=' + apiKey).then(function () {
     t.pass('api token set');
@@ -59,7 +59,7 @@ test('test cli with multiple params: good and bad', function (t) {
   .then(function () {
     t.fail('expect to error');
   }).catch(function (error) {
-    errObj = JSON.parse(error.message);
+    var errObj = JSON.parse(error.message);
     t.ok(errObj.length == 2, 'expecting two results');
     t.notOk(errObj[0].ok, 'first object shouldnt be ok');
     t.ok(errObj[1].ok, 'second object should be ok');
@@ -461,11 +461,11 @@ function (t) {
     var pkg = req.body;
     t.equal(req.method, 'POST', 'makes POST request');
     t.match(req.url, '/vuln/maven', 'posts to correct url');
-    t.equal(pkg.artifactId, 'maven-app', 'specifies artifactId');
+    t.equal(pkg.name, 'com.mycompany.app:maven-app', 'specifies name');
     t.ok(pkg.dependencies['axis:axis'], 'specifies dependency');
     t.ok(pkg.dependencies['junit:junit'], 'specifies dependency');
-    t.equal(pkg.dependencies['junit:junit'].artifactId, 'junit',
-            'specifies dependency artifactId');
+    t.equal(pkg.dependencies['junit:junit'].name, 'junit:junit',
+            'specifies dependency name');
     t.equal(req.query.org, 'nobelprize.org', 'org sent as a query in request');
   });
 });
@@ -581,6 +581,95 @@ test('`test npm-package-missing-dep ` in package-lock works', function (t) {
         'no "from" array on dep');
     });
 });
+
+// Unfortunately, lockfile parser for yarn doesn't work on node < 6
+// https://github.com/snyk/nodejs-lockfile-parser/blob/master/lib/parsers/yarn-lock-parse.ts#L32
+if (parseInt(process.version.slice(1).split('.')[0], 10) < 6) {
+  test('Testing yarn.lock on node 4', async (t) => {
+    return cli.test('npm-package-missing-dep', {file: 'yarn.lock'})
+      .catch((e) => {
+        t.includes(e.message,
+          'less than 6. Please upgrade your Node.js',
+          'Information about non-supported environment is shown');
+      });
+  });
+} else {
+  test('`test npm-package --file=yarn.lock ` sends pkg info', function (t) {
+    chdirWorkspaces();
+    return cli.test('npm-package', {file: 'yarn.lock'})
+      .then(function () {
+        var req = server.popRequest();
+        var pkg = req.body;
+        t.equal(req.method, 'POST', 'makes POST request');
+        t.match(req.url, '/vuln/npm', 'posts to correct url');
+        t.ok(pkg.dependencies['debug'], 'dependency');
+        t.ok(pkg.dependencies['debug'].dependencies['ms'], 'transitive dependency');
+        t.notOk(pkg.dependencies['object-assign'],
+          'no dev dependency');
+        t.notOk(pkg.from, 'no "from" array on root');
+        t.notOk(pkg.dependencies['debug'].from,
+          'no "from" array on dep');
+      });
+  });
+
+  test('`test npm-package --file=yarn.lock --dev` sends pkg info', function (t) {
+    chdirWorkspaces();
+    return cli.test('npm-package', {file: 'yarn.lock', dev: true})
+      .then(function () {
+        var req = server.popRequest();
+        var pkg = req.body;
+        t.equal(req.method, 'POST', 'makes POST request');
+        t.match(req.url, '/vuln/npm', 'posts to correct url');
+        t.ok(pkg.dependencies['debug'], 'dependency');
+        t.ok(pkg.dependencies['debug'].dependencies['ms'], 'transitive dependency');
+        t.ok(pkg.dependencies['object-assign'],
+          'dev dependency included');
+        t.notOk(pkg.from, 'no "from" array on root');
+        t.notOk(pkg.dependencies['debug'].from,
+          'no "from" array on dep');
+      });
+  });
+
+  test('`test npm-package-shrinkwrap --file=yarn.lock ` with npm-shrinkwrap errors', function (t) {
+    t.plan(1);
+    chdirWorkspaces();
+    return cli.test('npm-package-shrinkwrap', {file: 'yarn.lock'})
+      .catch((e) => {
+        t.includes(e.message, '--file=yarn.lock', 'Contains enough info about error');
+      });
+  });
+
+  test('`test npm-package-with-subfolder --file=yarn.lock ` picks top-level files', function (t) {
+    chdirWorkspaces();
+    return cli.test('npm-package-with-subfolder', {file: 'yarn.lock'})
+      .then(function () {
+        var req = server.popRequest();
+        var pkg = req.body;
+        t.equal(pkg.name, 'npm-package-top-level', 'correct package is taken');
+        t.ok(pkg.dependencies['to-array'], 'dependency');
+      });
+  });
+
+  test('`test npm-package-with-subfolder --file=subfolder/yarn.lock ` picks subfolder files', function (t) {
+    chdirWorkspaces();
+    return cli.test('npm-package-with-subfolder', {file: 'subfolder/yarn.lock'})
+      .then(function () {
+        var req = server.popRequest();
+        var pkg = req.body;
+        t.equal(pkg.name, 'npm-package-subfolder', 'correct package is taken');
+        t.ok(pkg.dependencies['to-array'], 'dependency');
+      });
+  });
+
+  test('`test npm-package-missing-dep --file=yarn.lock ` with missing dep errors', function (t) {
+    t.plan(1);
+    chdirWorkspaces();
+    return cli.test('npm-package-missing-dep', {file: 'yarn.lock'})
+      .catch((e) => {
+        t.includes(e.message, 'out of sync', 'Contains enough info about error');
+      });
+  });
+}
 
 test('`test` on a yarn package does work and displays appropriate text',
 function (t) {
@@ -1426,11 +1515,11 @@ test('`monitor maven-app`', function (t) {
     var pkg = req.body.package;
     t.equal(req.method, 'PUT', 'makes PUT request');
     t.match(req.url, '/monitor/maven', 'puts at correct url');
-    t.equal(pkg.artifactId, 'maven-app', 'specifies artifactId');
+    t.equal(pkg.name, 'com.mycompany.app:maven-app', 'specifies name');
     t.ok(pkg.dependencies['junit:junit'], 'specifies dependency');
-    t.equal(pkg.dependencies['junit:junit'].artifactId,
-      'junit',
-      'specifies dependency artifactId');
+    t.equal(pkg.dependencies['junit:junit'].name,
+      'junit:junit',
+      'specifies dependency name');
     t.notOk(pkg.from, 'no "from" array on root');
     t.notOk(pkg.dependencies['junit:junit'].from, 'no "from" array on dep');
   });
@@ -1445,7 +1534,7 @@ test('`monitor maven-multi-app`', function (t) {
     var pkg = req.body.package;
     t.equal(req.method, 'PUT', 'makes PUT request');
     t.match(req.url, '/monitor/maven', 'puts at correct url');
-    t.equal(pkg.artifactId, 'maven-multi-app', 'specifies artifactId');
+    t.equal(pkg.name, 'com.mycompany.app:maven-multi-app', 'specifies name');
     t.ok(pkg.dependencies['com.mycompany.app:simple-child'],
       'specifies dependency');
     t.notOk(pkg.from, 'no "from" array on root');
@@ -1905,7 +1994,7 @@ function stubExec(t, execOutputFile) {
 }
 
 // @later: try and remove this config stuff
-// Was copied straight from ../cli-server.js
+// Was copied straight from ../src/cli-server.js
 after('teardown', function (t) {
   t.plan(4);
 
