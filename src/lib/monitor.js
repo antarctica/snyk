@@ -47,6 +47,7 @@ function monitor(root, meta, info) {
               pluginName: pluginMeta.name,
               pluginRuntime: pluginMeta.runtime,
               dockerImageId: pluginMeta.dockerImageId,
+              dockerBaseImage: pkg.docker ? pkg.docker.baseImage : undefined,
               projectName: meta['project-name'],
             },
             policy: policy.toString(),
@@ -73,7 +74,10 @@ function monitor(root, meta, info) {
           } else {
             var e = new Error('unexpected error: ' + body.message);
             e.code = res.statusCode;
-            e.cliMessage = body && body.cliMessage;
+            e.userMessage = body && body.userMessage;
+            if (!e.userMessage && res.statusCode === 504) {
+              e.userMessage = 'Connection Timeout';
+            }
             reject(e);
           }
         });
